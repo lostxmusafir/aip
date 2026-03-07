@@ -1,12 +1,29 @@
 import React, { useState, useEffect } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle, Clock, Loader, MapPin, Camera, Building } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Clock, Loader, MapPin, Camera, Building, Phone } from 'lucide-react';
+
+const API_BASE_URL = 'http://192.168.1.8:8000';
+
+/**
+ * @typedef {Object} Complaint
+ * @property {string} id
+ * @property {string} description
+ * @property {string} contact_no
+ * @property {string} department
+ * @property {string} category
+ * @property {string} status
+ * @property {string} image_status
+ * @property {number} ai_score
+ * @property {string} sub_division
+ * @property {string} [image_url]
+ */
 
 export default function App() {
+  /** @type {[Complaint[], React.Dispatch<React.SetStateAction<Complaint[]>>]} */
   const [complaints, setComplaints] = useState([]);
   const [currentTime, setCurrentTime] = useState('');
 
   const fetchComplaints = () => {
-    fetch('http://localhost:8000/complaints')
+    fetch(`${API_BASE_URL}/complaints`)
       .then(res => res.json())
       .then(data => setComplaints(data.reverse()))
       .catch(err => console.error("Error fetching data:", err));
@@ -36,7 +53,7 @@ export default function App() {
 
   const handleStatusUpdate = async (id, newStatus) => {
     try {
-      const response = await fetch(`http://localhost:8000/complaints/${id}/status`, {
+      const response = await fetch(`${API_BASE_URL}/complaints/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -60,6 +77,41 @@ export default function App() {
     c =>
       (c.department?.includes('Emergency') || c.department?.includes('Police')) &&
       c.status === 'Pending'
+  ).length;
+  const toLower = (value) => String(value || '').toLowerCase();
+  const hasAnyKeyword = (text, keywords) => keywords.some(keyword => text.includes(keyword));
+  const isEmergencyTicket = (ticket) =>
+    toLower(ticket.category) === 'emergency' || toLower(ticket.department).includes('emergency');
+  const isPoliceEmergency = (ticket) => {
+    const subDivision = toLower(ticket.sub_division);
+    const description = toLower(ticket.description);
+    return subDivision.includes('police') || hasAnyKeyword(description, ['police', 'theft', 'chori']);
+  };
+  const isMedicalEmergency = (ticket) => {
+    const subDivision = toLower(ticket.sub_division);
+    const description = toLower(ticket.description);
+    return subDivision.includes('medical') || hasAnyKeyword(description, ['ambulance', 'hospital', 'doctor']);
+  };
+  const isFireEmergency = (ticket) => {
+    const subDivision = toLower(ticket.sub_division);
+    const description = toLower(ticket.description);
+    return subDivision.includes('fire') || hasAnyKeyword(description, ['fire', 'aag', 'smoke']);
+  };
+  const policeEmergencyCount = complaints.filter(
+    ticket => isEmergencyTicket(ticket) && isPoliceEmergency(ticket)
+  ).length;
+  const medicalEmergencyCount = complaints.filter(
+    ticket => isEmergencyTicket(ticket) && isMedicalEmergency(ticket)
+  ).length;
+  const fireEmergencyCount = complaints.filter(
+    ticket => isEmergencyTicket(ticket) && isFireEmergency(ticket)
+  ).length;
+  const otherEmergencyCount = complaints.filter(
+    ticket =>
+      isEmergencyTicket(ticket) &&
+      !isPoliceEmergency(ticket) &&
+      !isMedicalEmergency(ticket) &&
+      !isFireEmergency(ticket)
   ).length;
 
   const getDepartmentColor = (department) => {
@@ -115,6 +167,19 @@ export default function App() {
         <StatCard title="Resolved" count={resolved} icon={<CheckCircle size={28} className="text-green-600" />} color="bg-green-50" borderColor="border-green-200" />
       </div>
 
+      <div className="mb-10 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-extrabold text-gray-900">Emergency Departmental Breakdown</h3>
+          <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-600">Live AI Feed</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <EmergencyMiniCard title="Police" count={policeEmergencyCount} color="blue" />
+          <EmergencyMiniCard title="Medical" count={medicalEmergencyCount} color="green" />
+          <EmergencyMiniCard title="Fire" count={fireEmergencyCount} color="red" />
+          <EmergencyMiniCard title="Other Emergencies" count={otherEmergencyCount} color="gray" />
+        </div>
+      </div>
+
       <div className="flex justify-between items-center mb-6 border-b border-gray-200 pb-3">
         <h2 className="text-2xl font-bold text-gray-800">Recent AI Allocations</h2>
         <span className="text-sm font-medium text-gray-500 bg-gray-200 px-3 py-1 rounded-full">Live Feed</span>
@@ -155,8 +220,70 @@ function StatCard({ title, count, icon, color, borderColor, className = '' }) {
   );
 }
 
+function EmergencyMiniCard({ title, count, color }) {
+  const cardStyles = {
+    blue: {
+      box: 'bg-blue-50 border-blue-200',
+      title: 'text-blue-800',
+      count: 'text-blue-700',
+      dot: 'bg-blue-500',
+    },
+    green: {
+      box: 'bg-green-50 border-green-200',
+      title: 'text-green-800',
+      count: 'text-green-700',
+      dot: 'bg-green-500',
+    },
+    red: {
+      box: 'bg-red-50 border-red-200',
+      title: 'text-red-800',
+      count: 'text-red-700',
+      dot: 'bg-red-500',
+    },
+    gray: {
+      box: 'bg-gray-50 border-gray-200',
+      title: 'text-gray-700',
+      count: 'text-gray-700',
+      dot: 'bg-gray-500',
+    },
+  };
+
+  const styles = cardStyles[color] || cardStyles.blue;
+
+  return (
+    <div className={`rounded-xl border p-4 ${styles.box}`}>
+      <div className="mb-3 flex items-center justify-between">
+        <span className={`text-sm font-bold ${styles.title}`}>{title}</span>
+        <span className="relative flex h-2.5 w-2.5">
+          <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${styles.dot}`}></span>
+          <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${styles.dot}`}></span>
+        </span>
+      </div>
+      <div className="flex items-end gap-2">
+        <span className={`text-3xl font-black ${styles.count}`}>{count}</span>
+        <span className="mb-1 text-xs font-semibold text-gray-500">Live</span>
+      </div>
+    </div>
+  );
+}
+
 function TicketCard({ ticket, onStatusChange, departmentColor }) {
   const aiScore = Number.isFinite(ticket.ai_score) ? ticket.ai_score : null;
+  const subDivision = typeof ticket.sub_division === 'string' ? ticket.sub_division.trim() : '';
+
+  const getSubDivisionBadgeClass = (name) => {
+    const normalized = name.toLowerCase();
+    if (normalized.includes('police')) {
+      return 'bg-blue-100 text-blue-800 border-blue-200';
+    }
+    if (normalized.includes('medical') || normalized.includes('ems')) {
+      return 'bg-green-100 text-green-800 border-green-200';
+    }
+    if (normalized.includes('fire')) {
+      return 'bg-red-100 text-red-800 border-red-200';
+    }
+    return 'bg-gray-100 text-gray-700 border-gray-200';
+  };
 
   return (
     <div className="bg-white rounded-2xl shadow-md hover:shadow-xl transition-all duration-300 border border-gray-100 flex flex-col overflow-hidden group">
@@ -177,7 +304,7 @@ function TicketCard({ ticket, onStatusChange, departmentColor }) {
         {ticket.image_url && (
           <div className="mb-4 w-full aspect-video rounded-xl overflow-hidden border border-gray-200 bg-gray-100">
             <img 
-              src={`http://localhost:8000${ticket.image_url}`} 
+              src={`${API_BASE_URL}${ticket.image_url}`} 
               alt="Issue evidence" 
               className="h-full w-full object-cover"
               onError={(e) => { e.target.style.display = 'none'; }}
@@ -189,16 +316,33 @@ function TicketCard({ ticket, onStatusChange, departmentColor }) {
           "{ticket.description}"
         </p>
 
-        <div className={`${departmentColor} rounded-xl p-4 mb-5 border border-indigo-100/50 group-hover:bg-indigo-50/60 transition-colors`}>
-          <div className="flex items-center text-sm font-bold text-indigo-800 mb-2">
+        <div className={`${departmentColor} rounded-xl p-4 mb-4 border border-indigo-100/50 group-hover:bg-indigo-50/60 transition-colors`}>
+          <div className="flex flex-wrap items-center gap-2 text-sm font-bold text-indigo-800 mb-2">
             <Building size={18} className="mr-2" />
             {ticket.department}
+            {subDivision && (
+              <span
+                className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold ${getSubDivisionBadgeClass(subDivision)}`}
+              >
+                {subDivision}
+              </span>
+            )}
           </div>
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-500">AI Confidence Score:</span>
             <span className="text-xs font-black text-indigo-600 bg-white px-2 py-1 rounded-md shadow-sm border border-indigo-100">
               {aiScore === null ? "N/A" : `${aiScore}%`}
             </span>
+          </div>
+        </div>
+
+        <div className="rounded-xl p-4 mb-5 border border-gray-200 bg-white">
+          <div className="flex items-center text-sm font-bold text-gray-800 mb-2">
+            <Phone size={18} className="mr-2" />
+            Citizen Contact
+          </div>
+          <div className="text-lg font-extrabold tracking-wider text-gray-900">
+            {ticket.contact_no || "N/A"}
           </div>
         </div>
 
