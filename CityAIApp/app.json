@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "City AI Portal",
+    "slug": "CityAIApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cityaiapp.portal",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "This app needs location to tag your complaint with GPS coordinates.",
+        "NSCameraUsageDescription": "This app needs camera to capture a photo of the issue."
+      }
+    },
+    "android": {
+      "package": "com.cityaiapp.portal",
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "CAMERA"]
+    }
+  }
+}
