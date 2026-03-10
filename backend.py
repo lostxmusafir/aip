@@ -3,8 +3,10 @@ import os
 import shutil
 import socket
 import uuid
-import base64
 import json
+import base64
+import urllib.request
+import urllib.error
 from typing import Dict, List, Optional
 
 import uvicorn
@@ -12,12 +14,21 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from openai import AsyncOpenAI
 
-# 🧠 GOD MODE AI: Initialize OpenAI Client
-# Put your actual OpenAI API Key here!
-OPENAI_API_KEY = "YOUR_OPENAI_API_KEY_HERE"
-openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# 🧠 GOD MODE AI (FREE): Direct REST API Fallback
+GEMINI_API_KEYS = [
+    "AIzaSyCimbYgJP7HcNGOSGU8DkdA9lDH5wTAPTc",
+    "AIzaSyBk-VqejT-c2Ak08UbJy3bzhqhUwrky1RM"
+]
+
+# 🎯 AUTO-DISCOVERY: List of models to try until one works
+MODELS_TO_TRY = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro"
+]
 
 app = FastAPI()
 
@@ -34,7 +45,7 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 complaints_db = []
 
-# Reference lists for OpenAI Prompt Context
+# Reference lists for Prompt Context
 VALID_CATEGORIES = [
     "Emergency", "Sanitation", "Water", "Electricity", 
     "Roads/PWD", "Health", "Administrative", "Animal Control", 
@@ -84,11 +95,15 @@ def get_free_port(starting_port: int = 8000) -> int:
                 return port
             port += 1
 
-def encode_image_to_base64(image_path: str) -> str:
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
+# 🧹 AUTO-CLEANUP WORKER
+async def delete_resolved_tickets() -> None:
+    while True:
+        await asyncio.sleep(3600)
+        global complaints_db
+        complaints_db = [complaint for complaint in complaints_db if complaint.status != "Resolved"]
+        print("Auto-Cleanup: Removed resolved tickets from database")
 
-# ⏱️ 5-SECOND BACKGROUND WORKER (POWERED BY GPT-4o-mini)
+# ⏱️ 5-SECOND BACKGROUND WORKER (POWERED BY AUTO-DISCOVERY REST API)
 async def background_ai_worker() -> None:
     while True:
         await asyncio.sleep(5) 
@@ -96,68 +111,113 @@ async def background_ai_worker() -> None:
         for complaint in complaints_db:
             if complaint.ai_status == "Queued":
                 complaint.ai_status = "Processing"
-                print(f"🧠 OpenAI God Mode is analyzing Ticket: {complaint.id}")
+                print(f"\n🧠 Starting AI Analysis for Ticket: {complaint.id}")
                 
-                try:
-                    # Prepare content for OpenAI
-                    messages_content = [
-                        {
-                            "type": "text",
-                            "text": f"Analyze this civic complaint from India (can be Hindi, Gujarati, Hinglish, or English).\n\nDescription: '{complaint.description}'\n\nBased on the description and image (if provided), output a strictly formatted JSON object with no markdown wrappers or extra text. Use these exact keys:\n1. 'category': Must be one of {VALID_CATEGORIES}.\n2. 'sub_division': If category is 'Emergency', must be one of {VALID_SUB_DIVISIONS}. Otherwise, use 'N/A'.\n3. 'ai_score': An integer between 70 and 99 representing confidence level.\n4. 'image_status': A short 1-sentence description of what you see in the image (if any) and how it relates to the complaint. If no image, say 'No Image Uploaded'."
-                        }
-                    ]
-
-                    # Add Image if it exists
-                    if complaint.image_url:
-                        local_image_path = f".{complaint.image_url}"
-                        if os.path.exists(local_image_path):
-                            base64_image = encode_image_to_base64(local_image_path)
-                            messages_content.append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            })
-
-                    # Call OpenAI API
-                    response = await openai_client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {
-                                "role": "system", 
-                                "content": "You are an advanced AI dispatcher for a Smart City in India. You accurately classify citizen complaints and output ONLY valid JSON."
-                            },
-                            {
-                                "role": "user", 
-                                "content": messages_content
-                            }
-                        ],
-                        max_tokens=300,
-                        temperature=0.0,
-                        response_format={ "type": "json_object" }
-                    )
-
-                    # Parse JSON Response
-                    result_text = response.choices[0].message.content
-                    result_json = json.loads(result_text)
-
-                    # Update Ticket
-                    category = result_json.get("category", "General")
-                    if category not in VALID_CATEGORIES:
-                        category = "General"
-                        
-                    complaint.category = category
-                    complaint.department = DEPARTMENTS.get(category, "General Support")
-                    complaint.sub_division = result_json.get("sub_division", "N/A")
-                    complaint.ai_score = int(result_json.get("ai_score", 85))
-                    complaint.image_status = result_json.get("image_status", "Analyzed successfully.")
+                success = False
+                
+                # 🔄 Loop 1: Iterate through available API Keys
+                for api_key_idx, api_key in enumerate(GEMINI_API_KEYS):
+                    if success: break
                     
-                    complaint.ai_status = "Completed"
-                    print(f"✅ God Mode Success! Ticket {complaint.id} -> {complaint.department} ({complaint.sub_division}) [Score: {complaint.ai_score}]")
+                    # 🔄 Loop 2: Auto-Discover active model
+                    for model_name in MODELS_TO_TRY:
+                        if success: break
+                        
+                        try:
+                            print(f"   [Try] Key {api_key_idx + 1} | Model: {model_name}...")
+                            
+                            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                            
+                            prompt_text = f"Analyze this civic complaint from India (can be Hindi, Gujarati, Hinglish, or English).\n\nDescription: '{complaint.description}'\n\nBased on the description and image (if provided), output a strictly formatted JSON object with no markdown wrappers or extra text. Use these exact keys:\n1. 'category': Must be one of {VALID_CATEGORIES}.\n2. 'sub_division': If category is 'Emergency', must be one of {VALID_SUB_DIVISIONS}. Otherwise, use 'N/A'.\n3. 'ai_score': An integer between 70 and 99 representing confidence level.\n4. 'image_status': A short 1-sentence description of what you see in the image (if any) and how it relates to the complaint. If no image, say 'No Image Uploaded'."
+                            
+                            parts = [{"text": prompt_text}]
 
-                except Exception as e:
-                    print(f"❌ OpenAI API Error for Ticket {complaint.id}: {e}")
-                    # Revert to Queued so it tries again, or mark as Failed
+                            # Add Image if it exists
+                            if complaint.image_url:
+                                local_image_path = f".{complaint.image_url}"
+                                if os.path.exists(local_image_path):
+                                    with open(local_image_path, "rb") as img_file:
+                                        b64_img = base64.b64encode(img_file.read()).decode('utf-8')
+                                    
+                                    ext = os.path.splitext(local_image_path)[1].lower()
+                                    mime_type = "image/png" if ext == ".png" else "image/jpeg"
+                                    
+                                    # 🛠️ FIX: Strict camelCase required by Google REST API
+                                    parts.append({
+                                        "inlineData": {
+                                            "mimeType": mime_type,
+                                            "data": b64_img
+                                        }
+                                    })
+
+                            # Construct payload perfectly with safety filters OFF
+                            payload = {
+                                "contents": [{"parts": parts}],
+                                "generationConfig": {"responseMimeType": "application/json"},
+                                "safetySettings": [
+                                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                                ]
+                            }
+
+                            req = urllib.request.Request(
+                                url, 
+                                data=json.dumps(payload).encode('utf-8'), 
+                                headers={'Content-Type': 'application/json'}
+                            )
+                            
+                            # Execute request in a thread so it doesn't block FastAPI
+                            response = await asyncio.to_thread(urllib.request.urlopen, req)
+                            response_data = json.loads(response.read().decode('utf-8'))
+                            
+                            # Extract the result text
+                            result_text = response_data['candidates'][0]['content']['parts'][0]['text']
+                            
+                            # 🛠️ Bulletproof JSON Cleaning
+                            result_text = result_text.strip()
+                            start_idx = result_text.find('{')
+                            end_idx = result_text.rfind('}')
+                            
+                            if start_idx != -1 and end_idx != -1:
+                                result_text = result_text[start_idx:end_idx+1]
+                                
+                            result_json = json.loads(result_text)
+
+                            # Update Ticket
+                            category = result_json.get("category", "General")
+                            if category not in VALID_CATEGORIES:
+                                category = "General"
+                                
+                            complaint.category = category
+                            complaint.department = DEPARTMENTS.get(category, "General Support")
+                            complaint.sub_division = result_json.get("sub_division", "N/A")
+                            complaint.ai_score = int(result_json.get("ai_score", 85))
+                            complaint.image_status = result_json.get("image_status", "Analyzed successfully.")
+                            
+                            complaint.ai_status = "Completed"
+                            print(f"✅ SUCCESS! Ticket {complaint.id} -> {complaint.department} ({complaint.sub_division}) [Model Used: {model_name}]")
+                            
+                            # Mark as success to break out of all loops
+                            success = True
+
+                        except urllib.error.HTTPError as e:
+                            error_msg = e.read().decode('utf-8')
+                            if e.code == 404:
+                                print(f"   ⚠️ 404: '{model_name}' is dead. Trying next model...")
+                                continue # Try the next model name in the list
+                            else:
+                                print(f"   ❌ API Error on Key {api_key_idx + 1} | Code: {e.code} | MSG: {error_msg}")
+                                break # Break model loop, this key is bad. Try next key.
+                                
+                        except Exception as e:
+                            print(f"   ❌ General Error: {e}")
+                            break # Break model loop, try next key
+
+                if not success:
+                    print(f"❌ FATAL: All Models and API Keys failed for Ticket {complaint.id}.")
+                    # Revert to Queued so it tries again later, or mark as Failed
                     complaint.ai_status = "Failed"
                     complaint.department = "Manual Review Required"
                     complaint.category = "General"
@@ -166,6 +226,7 @@ async def background_ai_worker() -> None:
 @app.on_event("startup")
 async def startup_event() -> None:
     asyncio.create_task(background_ai_worker())
+    asyncio.create_task(delete_resolved_tickets())
 
 @app.post("/submit-complaint", response_model=Complaint)
 async def submit_complaint(
@@ -216,5 +277,5 @@ def update_status(complaint_id: str, update_data: StatusUpdate) -> Dict[str, obj
 
 if __name__ == "__main__":
     port = get_free_port(8000)
-    print(f"🚀 Starting God Mode Server on port {port}...")
+    print(f"🚀 Starting Auto-Discovery AI Server on port {port}...")
     uvicorn.run("backend:app", host="0.0.0.0", port=port, reload=True)
