@@ -173,15 +173,46 @@ export default function App() {
 
   const t = translations[language];
 
+  const getFreshLocation = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setLocationState({ type: 'denied', message: '' });
+      return null;
+    }
+
+    const servicesEnabled = await Location.hasServicesEnabledAsync();
+    if (!servicesEnabled) {
+      if (Platform.OS === 'android' && Location.enableNetworkProviderAsync) {
+        try {
+          await Location.enableNetworkProviderAsync();
+        } catch (e) {
+          setLocationState({ type: 'error', message: 'Location services are off' });
+          return null;
+        }
+      } else {
+        setLocationState({ type: 'error', message: 'Location services are off' });
+        return null;
+      }
+    }
+
+    try {
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        timeout: 15000,
+      });
+      return loc;
+    } catch (e) {
+      const last = await Location.getLastKnownPositionAsync();
+      if (last) return last;
+      throw e;
+    }
+  };
+
   useEffect(() => {
     (async () => {
       try {
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') {
-          setLocationState({ type: 'denied', message: '' });
-          return;
-        }
-        const loc = await Location.getCurrentPositionAsync({});
+        const loc = await getFreshLocation();
+        if (!loc) return;
         setLatitude(loc.coords.latitude);
         setLongitude(loc.coords.longitude);
         setLocationState({ type: 'coords', message: '' });
@@ -225,18 +256,17 @@ export default function App() {
       return;
     }
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(
-        'Location Required',
-        'We need your exact location to send the right department to the spot.'
-      );
-      return;
-    }
-
     setLoading(true);
     try {
-      const loc = await Location.getCurrentPositionAsync({});
+      const loc = await getFreshLocation();
+      if (!loc) {
+        Alert.alert(
+          'Location Required',
+          'We need your exact location to send the right department to the spot.'
+        );
+        setLoading(false);
+        return;
+      }
       const currentLatitude = loc.coords.latitude;
       const currentLongitude = loc.coords.longitude;
 
@@ -306,6 +336,13 @@ export default function App() {
     return '#94a3b8';
   };
 
+  const getPriorityLabel = (score) => {
+    if (typeof score !== 'number') return 'Medium';
+    if (score >= 90) return 'Critical';
+    if (score >= 80) return 'High';
+    return 'Medium';
+  };
+
   const locationStatusText = (() => {
     if (locationState.type === 'checking') return t.locationStatus.checking;
     if (locationState.type === 'denied') return t.locationStatus.denied;
@@ -322,6 +359,17 @@ export default function App() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
+        <Text style={styles.headerTitle}>CITY AI APP</Text>
+        <TouchableOpacity style={styles.headerAction}>
+          <Text style={styles.headerActionText}>!</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.screenContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.languageToggleRow}>
           <TouchableOpacity
             style={[styles.languageButton, language === 'en' && styles.languageButtonActive]}
@@ -363,16 +411,17 @@ export default function App() {
             </Text>
           </TouchableOpacity>
         </View>
-        <Text style={styles.headerTitle}>{t.headerTitle}</Text>
-      </View>
-
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.screenContent}
-        keyboardShouldPersistTaps="handled"
-      >
+        <Text style={styles.sectionOverline}>New Submission</Text>
         <Text style={styles.title}>{t.title}</Text>
         <Text style={styles.subtitle}>{t.subtitle}</Text>
+
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionOverlineMuted}>Issue Intelligence</Text>
+          <View style={styles.aiStatusPill}>
+            <View style={styles.aiStatusDot} />
+            <Text style={styles.aiStatusText}>AI Assistant Active</Text>
+          </View>
+        </View>
 
         <View style={styles.locationBox}>
           <Text style={styles.locationLabel}>{t.locationStatus.label}</Text>
@@ -382,7 +431,7 @@ export default function App() {
         <TextInput
           style={styles.input}
           placeholder={t.descriptionPlaceholder}
-          placeholderTextColor="#999"
+          placeholderTextColor="#65708a"
           value={description}
           onChangeText={setDescription}
           multiline
@@ -391,7 +440,7 @@ export default function App() {
         <TextInput
           style={styles.input}
           placeholder="Contact Number (10 digits)"
-          placeholderTextColor="#999"
+          placeholderTextColor="#65708a"
           value={contactNo}
           onChangeText={setContactNo}
           keyboardType="phone-pad"
@@ -446,38 +495,69 @@ export default function App() {
         {trackErrorKey ? <Text style={styles.errorText}>{t.alerts[trackErrorKey]}</Text> : null}
 
         {trackedTicket ? (
-          <View style={styles.trackCard}>
-            <View style={styles.trackHeader}>
-              <Text style={styles.trackTitle}>{t.statusTitle}</Text>
-              <View
-                style={[
-                  styles.statusBadge,
-                  { backgroundColor: getStatusColor(trackedTicket.status) },
-                ]}
-              >
-                <Text style={styles.statusText}>{trackedTicket.status || t.pending}</Text>
+          <View style={styles.trackWrap}>
+            <View style={styles.heroRow}>
+              <View>
+                <Text style={styles.sectionOverline}>Current Status</Text>
+                <Text style={styles.heroTitle}>{trackedTicket.status || t.pending}</Text>
+              </View>
+              <View style={styles.incidentPill}>
+                <Text style={styles.incidentPillLabel}>Incident ID:</Text>
+                <Text style={styles.incidentPillValue}>#{trackedTicket.id}</Text>
               </View>
             </View>
 
-            <View style={styles.trackRowInfo}>
-              <Text style={styles.trackLabel}>{t.allocatedDepartment}</Text>
-              <Text style={styles.trackValue}>
-                {trackedTicket.allocated_division || trackedTicket.department || 'N/A'}
-              </Text>
+            <View style={styles.bentoGrid}>
+              <View style={styles.summaryCard}>
+                <Text style={styles.sectionOverlineMuted}>Report Summary</Text>
+                <Text style={styles.summaryText}>{trackedTicket.description || 'Report details unavailable.'}</Text>
+                <View style={styles.summaryMetaRow}>
+                  <View>
+                    <Text style={styles.metaLabel}>Department</Text>
+                    <Text style={styles.metaValue}>{trackedTicket.department || 'N/A'}</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.metaLabel}>Priority</Text>
+                    <Text style={styles.metaValueError}>{getPriorityLabel(trackedTicket.ai_score)}</Text>
+                  </View>
+                  <View>
+                    <Text style={styles.metaLabel}>Assigned to</Text>
+                    <Text style={styles.metaValue}>{trackedTicket.sub_division || 'Team Alpha'}</Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={styles.mapCard}>
+                <View style={styles.mapImageWrap}>
+                  <Image
+                    source={{ uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuCpJLi70iqyjDtT8qC1t3ps3i-isuEFNOH67D3TQ1apEF7y0i2IagRll7TDVYyxmsiBeTpfx9D2LonLdTbBGl8pSy_C82HeXVh9VCdBgmvfUa-g8gVVcddC8PISHPVsREfzlH3T6X5jBlgM2-J_pK-l2LI4INbpcN4OpXvPjbk5OdfkFCdkPJHJyyebuXy4fqJU5tbnv_vrfZXQVYgzse8YuVYht-lxNDav-EV8HJ3AZvsRPzf-nk844SEOOFyvQ5q-r_WbsHEY3ldZ' }}
+                    style={styles.mapImage}
+                  />
+                  <View style={styles.mapOverlay} />
+                  <View style={styles.mapPinWrap}>
+                    <Text style={styles.mapPin}>◎</Text>
+                  </View>
+                </View>
+                <View style={styles.mapInfo}>
+                  <Text style={styles.metaLabel}>Location</Text>
+                  <Text style={styles.metaValue}>
+                    {latitude && longitude ? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}` : 'Location unavailable'}
+                  </Text>
+                </View>
+              </View>
             </View>
 
-            <View style={styles.trackRowInfo}>
-              <Text style={styles.trackLabel}>{t.subDivisionLabel}</Text>
-              <Text style={styles.trackValue}>{trackedTicket.sub_division || 'N/A'}</Text>
-            </View>
-
-            <View style={styles.trackRowInfo}>
-              <Text style={styles.trackLabel}>{t.aiScoreLabel}</Text>
-              <Text style={styles.trackValue}>
-                {typeof trackedTicket.ai_confidence === 'number'
-                  ? `${trackedTicket.ai_confidence}%`
-                  : t.pending}
-              </Text>
+            <View style={styles.supportCard}>
+              <View style={styles.supportIcon}>
+                <Text style={styles.supportIconText}>◎</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.supportTitle}>Need assistance?</Text>
+                <Text style={styles.supportSubtitle}>Connect with an agent about this incident.</Text>
+              </View>
+              <TouchableOpacity style={styles.supportButton}>
+                <Text style={styles.supportButtonText}>Contact Support</Text>
+              </TouchableOpacity>
             </View>
           </View>
         ) : null}
@@ -487,128 +567,256 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f4f6f8' },
+  container: { flex: 1, backgroundColor: '#0b1326' },
   header: {
-    padding: 15,
-    backgroundColor: '#fff',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: 'rgba(45, 52, 73, 0.4)',
     borderBottomWidth: 1,
-    borderBottomColor: '#e1e4e8',
+    borderBottomColor: '#45464d',
     marginTop: Platform.OS === 'android' ? 30 : 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
+  headerTitle: { fontSize: 18, fontWeight: '600', color: '#dae2fd', letterSpacing: -0.2 },
+  headerAction: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#222a3d',
+  },
+  headerActionText: { color: '#c6c6cd', fontSize: 16, fontWeight: '700' },
+  scroll: { flex: 1 },
+  screenContent: { padding: 20, paddingBottom: 60 },
   languageToggleRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 10,
-    marginBottom: 10,
+    marginBottom: 16,
   },
   languageButton: {
     paddingVertical: 6,
     paddingHorizontal: 14,
     borderRadius: 999,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#131b2e',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
+    borderColor: '#2d3449',
   },
   languageButtonActive: {
-    backgroundColor: '#0f172a',
-    borderColor: '#0f172a',
+    backgroundColor: '#7bd0ff',
+    borderColor: '#7bd0ff',
   },
-  languageButtonText: { fontSize: 12, fontWeight: '700', color: '#0f172a' },
-  languageButtonTextActive: { color: '#fff' },
-  headerTitle: { fontSize: 22, fontWeight: '800', color: '#1a1a1a', textAlign: 'center' },
-  scroll: { flex: 1 },
-  screenContent: { padding: 20, paddingBottom: 40 },
-  title: { fontSize: 26, fontWeight: 'bold', color: '#111' },
-  subtitle: { fontSize: 14, color: '#666', marginBottom: 20, marginTop: 5 },
+  languageButtonText: { fontSize: 12, fontWeight: '700', color: '#c6c6cd' },
+  languageButtonTextActive: { color: '#00354a' },
+  sectionOverline: {
+    color: '#7bd0ff',
+    fontSize: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  sectionOverlineMuted: {
+    color: '#7b8189',
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    fontWeight: '700',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  aiStatusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(123, 208, 255, 0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  aiStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: '#7bd0ff',
+  },
+  aiStatusText: {
+    fontSize: 9,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    color: '#7bd0ff',
+    fontWeight: '700',
+  },
+  title: { fontSize: 34, fontWeight: '300', color: '#dae2fd', marginBottom: 6 },
+  subtitle: { fontSize: 13, color: '#c6c6cd', marginBottom: 20, marginTop: 2 },
   locationBox: {
-    backgroundColor: '#e0f2fe',
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: '#171f33',
+    padding: 14,
+    borderRadius: 14,
     marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#2d3449',
   },
-  locationLabel: { fontSize: 12, color: '#0369a1', fontWeight: '600', marginBottom: 4 },
-  locationText: { fontSize: 14, color: '#0c4a6e' },
+  locationLabel: { fontSize: 11, color: '#7bd0ff', fontWeight: '700', marginBottom: 6 },
+  locationText: { fontSize: 13, color: '#dae2fd' },
   input: {
-    backgroundColor: '#fff',
+    backgroundColor: '#222a3d',
     padding: 18,
-    borderRadius: 12,
+    borderRadius: 16,
     fontSize: 16,
     minHeight: 120,
     textAlignVertical: 'top',
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: '#2d3449',
     marginBottom: 16,
-    elevation: 2,
+    color: '#dae2fd',
   },
   photoButton: {
-    backgroundColor: '#64748b',
+    backgroundColor: '#131b2e',
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 16,
     alignItems: 'center',
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#2d3449',
   },
-  photoButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  thumbnail: { width: 100, height: 100, borderRadius: 8, marginBottom: 20 },
+  photoButtonText: { color: '#7bd0ff', fontSize: 14, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
+  thumbnail: { width: 110, height: 110, borderRadius: 14, marginBottom: 20, borderWidth: 1, borderColor: '#2d3449' },
   button: {
-    backgroundColor: '#007BFF',
-    padding: 16,
-    borderRadius: 12,
+    backgroundColor: '#7bd0ff',
+    padding: 18,
+    borderRadius: 28,
     alignItems: 'center',
     elevation: 3,
   },
-  buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  buttonText: { color: '#00354a', fontSize: 16, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
   ticketIdBox: {
     marginTop: 16,
-    backgroundColor: '#ecfeff',
+    backgroundColor: '#171f33',
     borderWidth: 1,
-    borderColor: '#22d3ee',
-    borderRadius: 12,
-    padding: 12,
+    borderColor: '#2d3449',
+    borderRadius: 16,
+    padding: 14,
   },
-  ticketIdLabel: { fontSize: 12, fontWeight: '700', color: '#0e7490', marginBottom: 4 },
-  ticketIdValue: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+  ticketIdLabel: { fontSize: 11, fontWeight: '700', color: '#7bd0ff', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1.2 },
+  ticketIdValue: { fontSize: 18, fontWeight: '800', color: '#dae2fd' },
   sectionHeader: { marginTop: 24, marginBottom: 12 },
-  sectionTitle: { fontSize: 20, fontWeight: '700', color: '#111827' },
-  sectionHint: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', color: '#dae2fd' },
+  sectionHint: { fontSize: 11, color: '#7b8189', marginTop: 2 },
   trackRow: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   trackInput: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#222a3d',
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#d1d5db',
+    borderColor: '#2d3449',
     fontSize: 14,
+    color: '#dae2fd',
   },
   trackButton: {
-    backgroundColor: '#0f172a',
+    backgroundColor: '#7bd0ff',
     paddingVertical: 14,
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: 14,
   },
-  trackButtonText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  errorText: { marginTop: 8, color: '#dc2626', fontSize: 12 },
+  trackButtonText: { color: '#00354a', fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
+  errorText: { marginTop: 8, color: '#ffb4ab', fontSize: 12 },
   trackCard: {
     marginTop: 16,
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: '#171f33',
+    borderRadius: 18,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderColor: '#2d3449',
   },
   trackHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  trackTitle: { fontSize: 16, fontWeight: '700', color: '#111827' },
+  trackTitle: { fontSize: 16, fontWeight: '700', color: '#dae2fd' },
   statusBadge: {
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 999,
   },
-  statusText: { fontSize: 12, fontWeight: '700', color: '#0f172a' },
+  statusText: { fontSize: 12, fontWeight: '700', color: '#0b1326' },
   trackRowInfo: { marginTop: 12 },
-  trackLabel: { fontSize: 12, color: '#6b7280', fontWeight: '600' },
-  trackValue: { fontSize: 14, fontWeight: '700', color: '#111827', marginTop: 4 },
+  trackLabel: { fontSize: 11, color: '#7b8189', fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
+  trackValue: { fontSize: 14, fontWeight: '700', color: '#dae2fd', marginTop: 6 },
+  trackWrap: { marginTop: 24 },
+  heroRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
+  heroTitle: { fontSize: 40, fontWeight: '300', color: '#dae2fd', letterSpacing: -0.5 },
+  incidentPill: {
+    backgroundColor: '#222a3d',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#2d3449',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  incidentPillLabel: { fontSize: 10, textTransform: 'uppercase', color: '#a7b6cc', letterSpacing: 1 },
+  incidentPillValue: { fontSize: 12, fontWeight: '700', color: '#dae2fd' },
+  bentoGrid: { marginTop: 20, gap: 12 },
+  summaryCard: {
+    backgroundColor: '#131b2e',
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: '#2d3449',
+  },
+  summaryText: { fontSize: 18, fontWeight: '300', color: '#dae2fd', lineHeight: 26, marginTop: 10 },
+  summaryMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 18, marginTop: 18 },
+  metaLabel: { fontSize: 10, textTransform: 'uppercase', color: '#a7b6cc', letterSpacing: 1, marginBottom: 4 },
+  metaValue: { fontSize: 14, fontWeight: '600', color: '#b9c8de' },
+  metaValueError: { fontSize: 14, fontWeight: '600', color: '#ffb4ab' },
+  mapCard: {
+    backgroundColor: '#131b2e',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#2d3449',
+    overflow: 'hidden',
+  },
+  mapImageWrap: { height: 140, backgroundColor: '#222a3d', position: 'relative' },
+  mapImage: { width: '100%', height: '100%', opacity: 0.6 },
+  mapOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(11, 19, 38, 0.35)' },
+  mapPinWrap: { position: 'absolute', top: 50, left: 0, right: 0, alignItems: 'center' },
+  mapPin: { fontSize: 28, color: '#7bd0ff' },
+  mapInfo: { padding: 16 },
+  supportCard: {
+    marginTop: 24,
+    backgroundColor: '#060e20',
+    borderRadius: 18,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.03)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  supportIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 999,
+    backgroundColor: '#222a3d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  supportIconText: { color: '#7bd0ff', fontSize: 18 },
+  supportTitle: { fontSize: 14, fontWeight: '600', color: '#dae2fd' },
+  supportSubtitle: { fontSize: 12, color: '#a7b6cc', marginTop: 2 },
+  supportButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: '#7bd0ff',
+  },
+  supportButtonText: { color: '#00354a', fontSize: 11, fontWeight: '700' },
 });
