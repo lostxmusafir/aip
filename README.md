@@ -27,8 +27,8 @@ Phir Expo Go app se QR scan karke phone par chalao.
 
 **IP kaise nikale:**
 
-- **Windows:** CMD/PowerShell me `ipconfig` chalao. **Wireless LAN adapter Wi-Fi** ke under **IPv4 Address** dekho (e.g. `192.168.1.5`).  
-  API_URL = `http://192.168.1.5:8000` (port wahi jisme backend chal raha hai).
+- **Windows:** CMD/PowerShell me `ipconfig` chalao. **Wireless LAN adapter Wi-Fi** ke under **IPv4 Address** dekho (e.g. `192.168.0.23`).  
+  API_URL = `http://192.168.0.23:8000` (port wahi jisme backend chal raha hai).
 - **Mac:** System Preferences → Network → Wi‑Fi → Advanced → TCP/IP → **IP Address**.
 
 **Zaruri:** Phone aur computer dono **same Wi‑Fi** par hon. Firewall me port 8000 allow karo (Windows: Allow an app through firewall / Python).

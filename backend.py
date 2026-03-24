@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 import shutil
 import socket
@@ -19,14 +19,14 @@ from pydantic import BaseModel, Field
 
 # ?? GOD MODE AI (FREE): Direct REST API Fallback
 # ? AAPKI DONO KEYS YAHAN ADD KAR DI GAYI HAIN
-GEMINI_API_KEYS = []
+GEMINI_API_KEYS = [
+    "AIzaSyBidz779rIO_lDgqKNehHif9TaH-fKcNDU",
+    "AIzaSyDp57L4JxgefcoUMM2T8WW9AHHcAHDHFw4",
+    "AIzaSyDhHnsZwkQBzitDRQoTeYwZZ7mypA_JO5I",
+]
 
 # ?? AUTO-DISCOVERY: List of models to try until one works
-MODELS_TO_TRY = [
-    "gemini-1.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash"
-]
+MODELS_TO_TRY = ["gemini-2.5-flash", "gemini-2.0-flash"]
 
 complaints_db = []
 DB_PATH = os.path.join(os.path.dirname(__file__), "complaints.db")
@@ -53,6 +53,7 @@ def init_db() -> None:
                 latitude TEXT,
                 longitude TEXT,
                 image_url TEXT,
+                audio_url TEXT,
                 created_at TEXT
             )
             """
@@ -61,12 +62,14 @@ def init_db() -> None:
         cols = [row[1] for row in conn.execute("PRAGMA table_info(complaints)").fetchall()]
         if "created_at" not in cols:
             conn.execute("ALTER TABLE complaints ADD COLUMN created_at TEXT")
+        if "audio_url" not in cols:
+            conn.execute("ALTER TABLE complaints ADD COLUMN audio_url TEXT")
         conn.commit()
 
 def load_complaints_from_db() -> None:
     global complaints_db
     with get_db_connection() as conn:
-        rows = conn.execute("SELECT id, description, contact_no, department, category, sub_division, status, image_status, ai_score, ai_status, latitude, longitude, image_url, created_at FROM complaints").fetchall()
+        rows = conn.execute("SELECT id, description, contact_no, department, category, sub_division, status, image_status, ai_score, ai_status, latitude, longitude, image_url, audio_url, created_at FROM complaints").fetchall()
     complaints_db = [
         Complaint(
             id=row[0],
@@ -82,7 +85,8 @@ def load_complaints_from_db() -> None:
             latitude=row[10],
             longitude=row[11],
             image_url=row[12],
-            created_at=row[13] or Complaint.__fields__["created_at"].default_factory(),
+            audio_url=row[13],
+            created_at=row[14] or Complaint.__fields__["created_at"].default_factory(),
         )
         for row in rows
     ]
@@ -91,8 +95,8 @@ def upsert_complaint(complaint: "Complaint") -> None:
     with get_db_connection() as conn:
         conn.execute(
             """
-            INSERT INTO complaints (id, description, contact_no, department, category, sub_division, status, image_status, ai_score, ai_status, latitude, longitude, image_url, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO complaints (id, description, contact_no, department, category, sub_division, status, image_status, ai_score, ai_status, latitude, longitude, image_url, audio_url, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 description=excluded.description,
                 contact_no=excluded.contact_no,
@@ -106,6 +110,7 @@ def upsert_complaint(complaint: "Complaint") -> None:
                 latitude=excluded.latitude,
                 longitude=excluded.longitude,
                 image_url=excluded.image_url,
+                audio_url=excluded.audio_url,
                 created_at=excluded.created_at
             """
             ,
@@ -123,6 +128,7 @@ def upsert_complaint(complaint: "Complaint") -> None:
                 complaint.latitude,
                 complaint.longitude,
                 complaint.image_url,
+                complaint.audio_url,
                 complaint.created_at,
             ),
         )
@@ -199,7 +205,7 @@ VALID_SUB_DIVISIONS = [
 
 class Complaint(BaseModel):
     id: str
-    description: str
+    description: str = ""
     contact_no: str
     department: str = "Analyzing..."
     category: str = "Analyzing..."
@@ -211,6 +217,7 @@ class Complaint(BaseModel):
     latitude: Optional[str] = None
     longitude: Optional[str] = None
     image_url: Optional[str] = None
+    audio_url: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.now().strftime("%d-%m-%Y %H:%M:%S"))
 
 class StatusUpdate(BaseModel):
@@ -285,7 +292,7 @@ async def analyze_complaint_live(complaint: Complaint) -> None:
                 
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
                 
-                prompt_text = f"Analyze this civic complaint from India (can be Hindi, Gujarati, Hinglish, or English).\n\nDescription: '{complaint.description}'\n\nBased on the description and image (if provided), output a strictly formatted JSON object with no markdown wrappers or extra text. Use these exact keys:\n1. 'category': MUST be exactly one of {VALID_CATEGORIES}. Do not invent new categories.\n2. 'sub_division': MUST be exactly one of {VALID_SUB_DIVISIONS}. Do not invent new sub-divisions. Use 'N/A' only if none fit.\n3. 'ai_score': An integer between 70 and 99 representing confidence level.\n4. 'image_status': A short 1-sentence description of what you see in the image (if any) and how it relates to the complaint. If no image, say 'No Image Uploaded'."
+                prompt_text = f"Analyze this civic complaint. You may receive a text description, an audio recording, an image, or a combination of these. Listen to the audio (if any), read the text (if any), and look at the image (if any) to determine the category and sub-division. The input could be in Hindi, Gujarati, Hinglish, or English.\n\nDescription: '{complaint.description}'\n\nBased on the description, audio (if provided), and image (if provided), output a strictly formatted JSON object with no markdown wrappers or extra text. Use these exact keys:\n1. 'category': MUST be exactly one of {VALID_CATEGORIES}. Do not invent new categories.\n2. 'sub_division': MUST be exactly one of {VALID_SUB_DIVISIONS}. Do not invent new sub-divisions. Use 'N/A' only if none fit.\n3. 'ai_score': An integer between 70 and 99 representing confidence level.\n4. 'image_status': A short 1-sentence description of what you see in the image (if any) and how it relates to the complaint. If no image, say 'No Image Uploaded'."
                 
                 parts = [{"text": prompt_text}]
 
@@ -303,6 +310,27 @@ async def analyze_complaint_live(complaint: Complaint) -> None:
                             "inlineData": {
                                 "mimeType": mime_type,
                                 "data": b64_img
+                            }
+                        })
+                if complaint.audio_url:
+                    local_audio_path = f".{complaint.audio_url}"
+                    if os.path.exists(local_audio_path):
+                        with open(local_audio_path, "rb") as audio_file:
+                            b64_audio = base64.b64encode(audio_file.read()).decode('utf-8')
+                        audio_ext = os.path.splitext(local_audio_path)[1].lower()
+                        audio_mime_map = {
+                            ".mp3": "audio/mpeg",
+                            ".wav": "audio/wav",
+                            ".m4a": "audio/mp4",
+                            ".aac": "audio/aac",
+                            ".webm": "audio/webm",
+                            ".ogg": "audio/ogg",
+                        }
+                        audio_mime_type = audio_mime_map.get(audio_ext, "audio/mpeg")
+                        parts.append({
+                            "inlineData": {
+                                "mimeType": audio_mime_type,
+                                "data": b64_audio
                             }
                         })
 
@@ -386,15 +414,88 @@ async def analyze_complaint_live(complaint: Complaint) -> None:
         complaint.category = "General"
         complaint.sub_division = "N/A"
 
+def _guess_audio_mime(filename: Optional[str], content_type: Optional[str]) -> str:
+    if content_type and content_type.startswith("audio/"):
+        return content_type
+    ext = os.path.splitext(filename or "")[1].lower()
+    audio_mime_map = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".webm": "audio/webm",
+        ".ogg": "audio/ogg",
+    }
+    return audio_mime_map.get(ext, "audio/mpeg")
+
+@app.post("/transcribe-audio")
+async def transcribe_audio(audio: UploadFile = File(...)) -> Dict[str, str]:
+    if audio is None:
+        raise HTTPException(status_code=400, detail="Audio file is required.")
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio file is empty.")
+    b64_audio = base64.b64encode(audio_bytes).decode('utf-8')
+    mime_type = _guess_audio_mime(audio.filename, audio.content_type)
+
+    prompt_text = (
+        "Transcribe the following audio into plain text. "
+        "Return only the transcription without extra formatting."
+    )
+    parts = [
+        {"text": prompt_text},
+        {"inlineData": {"mimeType": mime_type, "data": b64_audio}},
+    ]
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {"temperature": 0.2},
+    }
+
+    for api_key in GEMINI_API_KEYS:
+        for model_name in MODELS_TO_TRY:
+            try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                text = (
+                    result.get("candidates", [{}])[0]
+                    .get("content", {})
+                    .get("parts", [{}])[0]
+                    .get("text", "")
+                )
+                if text:
+                    return {"text": text.strip()}
+            except urllib.error.HTTPError as e:
+                try:
+                    error_body = e.read().decode("utf-8")
+                    print(f"? Transcription HTTPError {e.code}: {error_body}")
+                except Exception:
+                    print(f"? Transcription HTTPError {e.code}")
+                continue
+            except Exception as e:
+                print(f"? Transcription Error: {e}")
+                continue
+
+    raise HTTPException(status_code=503, detail="Transcription failed.")
+
 @app.post("/submit-complaint", response_model=Complaint)
 async def submit_complaint(
-    description: str = Form(...),
+    description: Optional[str] = Form(None),
     contact_no: str = Form(...),
     latitude: Optional[str] = Form(None),
     longitude: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
+    audio: Optional[UploadFile] = File(None),
 ) -> Complaint:
+    if (not description or not description.strip()) and audio is None:
+        raise HTTPException(status_code=400, detail="Either text description or voice audio must be provided.")
     image_url = None
+    audio_url = None
     if file:
         original_name = os.path.basename(file.filename or "upload.jpg")
         safe_name = f"{uuid.uuid4().hex}_{original_name}"
@@ -402,14 +503,22 @@ async def submit_complaint(
         with open(saved_image_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         image_url = f"/uploads/{safe_name}"
+    if audio:
+        original_audio_name = os.path.basename(audio.filename or "upload_audio")
+        safe_audio_name = f"{uuid.uuid4().hex}_{original_audio_name}"
+        saved_audio_path = os.path.join("uploads", safe_audio_name)
+        with open(saved_audio_path, "wb") as buffer:
+            shutil.copyfileobj(audio.file, buffer)
+        audio_url = f"/uploads/{safe_audio_name}"
 
     new_complaint = Complaint(
         id=str(uuid.uuid4())[:8].upper(),
-        description=description,
+        description=description or "",
         contact_no=contact_no,
         latitude=latitude,
         longitude=longitude,
         image_url=image_url,
+        audio_url=audio_url,
     )
     
     # ?? AWAIT LIVE AI ANALYSIS HERE BEFORE RETURNING TO FRONTEND

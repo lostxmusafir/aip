@@ -11,12 +11,13 @@
       "bundleIdentifier": "com.cityaiapp.portal",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app needs location to tag your complaint with GPS coordinates.",
-        "NSCameraUsageDescription": "This app needs camera to capture a photo of the issue."
+        "NSCameraUsageDescription": "This app needs camera to capture a photo of the issue.",
+        "NSMicrophoneUsageDescription": "This app needs microphone access to record voice complaints."
       }
     },
     "android": {
       "package": "com.cityaiapp.portal",
-      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "CAMERA"]
+      "permissions": ["ACCESS_FINE_LOCATION", "ACCESS_COARSE_LOCATION", "CAMERA", "RECORD_AUDIO"]
     }
   }
 }
