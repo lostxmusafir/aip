@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
-const API_BASE_URL = 'http://192.168.1.8:8000';
+const API_BASE_URL = 'http://192.168.0.23:8000';
 
 /**
  * @typedef {Object} Complaint
@@ -221,6 +221,9 @@ export default function App() {
   const filteredComplaints = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const filterValue = selectedFilter ? String(selectedFilter).toLowerCase() : null;
+    const isEmergencyFilter =
+      filterValue === 'police' || filterValue === 'medical' || filterValue === 'fire';
+
     return complaints.filter((ticket) => {
       const matchesQuery =
         !query ||
@@ -230,10 +233,12 @@ export default function App() {
         ticket.category?.toLowerCase().includes(query) ||
         ticket.sub_division?.toLowerCase().includes(query);
 
-      const matchesFilter =
-        !filterValue ||
-        ticket.department?.toLowerCase().includes(filterValue) ||
-        ticket.sub_division?.toLowerCase().includes(filterValue);
+      const matchesFilter = !filterValue
+        ? true
+        : isEmergencyFilter
+          ? isEmergencyTicket(ticket) && getEmergencyType(ticket) === filterValue
+          : ticket.department?.toLowerCase().includes(filterValue) ||
+            ticket.sub_division?.toLowerCase().includes(filterValue);
 
       return matchesQuery && matchesFilter;
     });

@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect } from 'react';
+import { useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -10,12 +11,14 @@ import {
   Alert,
   Platform,
   Image,
+  NativeModules,
 } from 'react-native';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
+// expo-av is loaded lazily to avoid crashing Expo Go if native module is missing
 
 // UPDATE THIS: Your computer's local Wi-Fi IP (same network as phone)
-const API_URL = 'http://192.168.1.8:8000';
+const API_URL = 'http://192.168.0.23:8000';
 
 const translations = {
   en: {
@@ -34,6 +37,12 @@ const translations = {
     },
     descriptionPlaceholder:
       'Describe the issue... (e.g., Khadda hai, Kachra pada hai, Light nahi hai)',
+    voiceTitle: 'Voice Input',
+    voiceHint: 'Tap the mic and speak your request.',
+    voiceStart: 'Tap to Speak',
+    voiceStop: 'Stop',
+    voiceListening: 'Listening...',
+    voiceProcessing: 'Transcribing...',
     takePhoto: 'Take Photo',
     submit: 'Submit to AI',
     ticketIdLabel: 'Your Ticket ID',
@@ -50,7 +59,8 @@ const translations = {
       errorTitle: 'Error',
       permissionNeededTitle: 'Permission needed',
       permissionNeededBody: 'Camera permission is required to take a photo.',
-      descriptionRequired: 'Please enter your complaint description.',
+      textOrVoiceRequired: 'Please enter a description or record a voice complaint.',
+      microphonePermission: 'Microphone permission is required to record audio.',
       locationRequired: 'Location is required. Please allow location access.',
       complaintLoggedTitle: 'Complaint Logged!',
       allocatedLabel: 'Allocated',
@@ -79,6 +89,12 @@ const translations = {
     },
     descriptionPlaceholder:
       'समस्या का विवरण दें... (उदा., खड्डा है, कचरा पड़ा है, लाइट नहीं है)',
+    voiceTitle: 'वॉइस इनपुट',
+    voiceHint: 'माइक पर टैप करें और अपनी शिकायत बोलें।',
+    voiceStart: 'बोलना शुरू करें',
+    voiceStop: 'रोकें',
+    voiceListening: 'सुन रहा है...',
+    voiceProcessing: 'ट्रांसक्राइब हो रहा है...',
     takePhoto: 'फोटो लें',
     submit: 'AI को सबमिट करें',
     ticketIdLabel: 'आपका टिकट आईडी',
@@ -95,7 +111,8 @@ const translations = {
       errorTitle: 'त्रुटि',
       permissionNeededTitle: 'अनुमति आवश्यक',
       permissionNeededBody: 'फोटो लेने के लिए कैमरा अनुमति आवश्यक है।',
-      descriptionRequired: 'कृपया अपनी शिकायत का विवरण दर्ज करें।',
+      textOrVoiceRequired: 'कृपया विवरण लिखें या वॉइस शिकायत रिकॉर्ड करें।',
+      microphonePermission: 'ऑडियो रिकॉर्ड करने के लिए माइक्रोफोन अनुमति आवश्यक है।',
       locationRequired: 'लोकेशन आवश्यक है। कृपया लोकेशन एक्सेस दें।',
       complaintLoggedTitle: 'शिकायत दर्ज हो गई!',
       allocatedLabel: 'आवंटित',
@@ -124,6 +141,12 @@ const translations = {
     },
     descriptionPlaceholder:
       'સમસ્યા લખો... (ઉદા., ખાડો છે, કચરો પડ્યો છે, લાઈટ નથી)',
+    voiceTitle: 'વૉઇસ ઇનપુટ',
+    voiceHint: 'માઈક પર ટેપ કરો અને તમારી ફરિયાદ કહો.',
+    voiceStart: 'બોલવું શરૂ કરો',
+    voiceStop: 'બંધ કરો',
+    voiceListening: 'સાંભળી રહ્યું છે...',
+    voiceProcessing: 'ટ્રાન્સક્રાઇબ થઇ રહ્યું છે...',
     takePhoto: 'ફોટો લો',
     submit: 'AI ને સબમિટ કરો',
     ticketIdLabel: 'તમારો ટિકિટ આઈડી',
@@ -140,7 +163,8 @@ const translations = {
       errorTitle: 'ભૂલ',
       permissionNeededTitle: 'મંજૂરી જરૂરી',
       permissionNeededBody: 'ફોટો લેવા માટે કેમેરાની મંજૂરી જરૂરી છે.',
-      descriptionRequired: 'કૃપા કરીને તમારી ફરિયાદનું વર્ણન દાખલ કરો.',
+      textOrVoiceRequired: 'કૃપા કરીને વર્ણન લખો અથવા વૉઇસ ફરિયાદ રેકોર્ડ કરો.',
+      microphonePermission: 'ઓડિયો રેકોર્ડ કરવા માટે માઇક્રોફોન મંજૂરી જરૂરી છે.',
       locationRequired: 'સ્થાન જરૂરી છે. કૃપા કરીને સ્થાન ઍક્સેસ આપો.',
       complaintLoggedTitle: 'ફરિયાદ નોંધાઈ!',
       allocatedLabel: 'ફાળવેલ',
@@ -163,6 +187,15 @@ export default function App() {
   const [description, setDescription] = useState('');
   const [contactNo, setContactNo] = useState('');
   const [photo, setPhoto] = useState(null);
+  const [recording, setRecording] = useState(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [audioPermissionStatus, setAudioPermissionStatus] = useState(null);
+  const [audioModuleAvailable, setAudioModuleAvailable] = useState(true);
+  const [audioRuntimeAvailable, setAudioRuntimeAvailable] = useState(
+    Boolean(NativeModules && NativeModules.ExponentAV)
+  );
+  const [cameraPermissionStatus, setCameraPermissionStatus] = useState(null);
+  const [locationPermissionStatus, setLocationPermissionStatus] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const [lastTicketId, setLastTicketId] = useState('');
@@ -172,9 +205,27 @@ export default function App() {
   const [trackErrorKey, setTrackErrorKey] = useState('');
 
   const t = translations[language];
+  const audioModuleRef = useRef(null);
+
+  const ensureLocationPermission = async () => {
+    try {
+      const current = await Location.getForegroundPermissionsAsync();
+      if (current?.status === 'granted') {
+        setLocationPermissionStatus('granted');
+        return 'granted';
+      }
+      const request = await Location.requestForegroundPermissionsAsync();
+      const nextStatus = request?.status || 'undetermined';
+      setLocationPermissionStatus(nextStatus);
+      return nextStatus;
+    } catch (e) {
+      setLocationPermissionStatus('undetermined');
+      return 'undetermined';
+    }
+  };
 
   const getFreshLocation = async () => {
-    const { status } = await Location.requestForegroundPermissionsAsync();
+    const status = await ensureLocationPermission();
     if (status !== 'granted') {
       setLocationState({ type: 'denied', message: '' });
       return null;
@@ -210,6 +261,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
+      setLocationState({ type: 'checking', message: '' });
       try {
         const loc = await getFreshLocation();
         if (!loc) return;
@@ -223,6 +275,23 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let isActive = true;
+    (async () => {
+      try {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (isActive) {
+          setCameraPermissionStatus(permission?.status || 'undetermined');
+        }
+      } catch (error) {
+        console.error('Camera permission request failed:', error);
+      }
+    })();
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!trackId.trim()) return;
     const intervalId = setInterval(() => {
       fetchTicketStatus(trackId.trim());
@@ -231,8 +300,7 @@ export default function App() {
   }, [trackId]);
 
   const takePhoto = async () => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
+    if (cameraPermissionStatus !== 'granted') {
       Alert.alert(t.alerts.permissionNeededTitle, t.alerts.permissionNeededBody);
       return;
     }
@@ -246,9 +314,141 @@ export default function App() {
     }
   };
 
+  const getAudioModule = async () => {
+    if (!audioRuntimeAvailable || !NativeModules?.ExponentAV) {
+      setAudioRuntimeAvailable(false);
+      setAudioModuleAvailable(false);
+      return null;
+    }
+    if (audioModuleRef.current) return audioModuleRef.current;
+    try {
+      const mod = await import('expo-av');
+      audioModuleRef.current = mod.Audio;
+      return audioModuleRef.current;
+    } catch (error) {
+      console.error('expo-av not available in this runtime:', error);
+      setAudioModuleAvailable(false);
+      return null;
+    }
+  };
+
+  const ensureAudioPermission = async () => {
+    const Audio = await getAudioModule();
+    if (!Audio) return false;
+    if (audioPermissionStatus === 'granted') return true;
+    try {
+      const permission = await Audio.requestPermissionsAsync();
+      setAudioPermissionStatus(permission?.status || 'undetermined');
+      return permission.granted;
+    } catch (error) {
+      console.error('Audio permission request failed:', error);
+      setAudioRuntimeAvailable(false);
+      setAudioModuleAvailable(false);
+      return false;
+    }
+  };
+
+  const startVoiceInput = async () => {
+    if (recording || isTranscribing) return;
+    if (!audioModuleAvailable || !audioRuntimeAvailable) {
+      Alert.alert(
+        t.alerts.errorTitle,
+        'Voice input is not available in this build. Please use a development build.'
+      );
+      return;
+    }
+    const Audio = await getAudioModule();
+    if (!Audio) {
+      Alert.alert(
+        t.alerts.errorTitle,
+        'Voice input is not available in this build. Please use a development build.'
+      );
+      return;
+    }
+    const granted = await ensureAudioPermission();
+    if (!granted) {
+      Alert.alert(t.alerts.permissionNeededTitle, t.alerts.microphonePermission);
+      return;
+    }
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
+      const { recording: newRecording } = await Audio.Recording.createAsync({
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.RECORDING_OPTION_ANDROID_OUTPUT_FORMAT_MPEG_4,
+          audioEncoder: Audio.RECORDING_OPTION_ANDROID_AUDIO_ENCODER_AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.m4a',
+          audioQuality: Audio.RECORDING_OPTION_IOS_AUDIO_QUALITY_HIGH,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+      });
+      setRecording(newRecording);
+    } catch (error) {
+      console.error(error);
+      Alert.alert(t.alerts.errorTitle, t.alerts.microphonePermission);
+    }
+  };
+
+  const transcribeAudio = async (uri) => {
+    setIsTranscribing(true);
+    try {
+      const formData = new FormData();
+      const name = `voice-${Date.now()}.m4a`;
+      const type = 'audio/mp4';
+      formData.append('audio', { uri, name, type });
+
+      const response = await fetch(`${API_URL}/transcribe-audio`, {
+        method: 'POST',
+        body: formData,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      if (!response.ok) throw new Error(t.alerts.serverError);
+      const data = await response.json();
+      const transcript = (data.text || '').trim();
+      if (transcript) {
+        setDescription((prev) => (prev ? `${prev} ${transcript}` : transcript));
+      }
+    } catch (error) {
+      console.error(error);
+      Alert.alert(t.alerts.connectionFailedTitle, t.alerts.connectionFailedBody);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const stopVoiceInput = async () => {
+    if (!recording) return;
+    try {
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setRecording(null);
+      if (uri) {
+        await transcribeAudio(uri);
+      }
+    } catch (error) {
+      console.error(error);
+      setRecording(null);
+    }
+  };
+
   const submitComplaint = async () => {
-    if (!description.trim()) {
-      Alert.alert(t.alerts.errorTitle, t.alerts.descriptionRequired);
+    const hasText = Boolean(description.trim());
+    if (!hasText) {
+      Alert.alert(t.alerts.errorTitle, t.alerts.textOrVoiceRequired);
       return;
     }
     if (!contactNo.trim() || contactNo.trim().length < 10) {
@@ -436,6 +636,30 @@ export default function App() {
           onChangeText={setDescription}
           multiline
         />
+
+        <View style={styles.voiceCard}>
+          <View>
+            <Text style={styles.voiceTitle}>{t.voiceTitle}</Text>
+            <Text style={styles.voiceHint}>{t.voiceHint}</Text>
+          </View>
+          <View style={styles.voiceRow}>
+            <TouchableOpacity
+              style={[styles.voiceButton, recording && styles.voiceButtonActive]}
+              onPress={recording ? stopVoiceInput : startVoiceInput}
+              disabled={isTranscribing}
+            >
+              <Text style={styles.voiceButtonText}>
+                {recording ? t.voiceStop : t.voiceStart}
+              </Text>
+            </TouchableOpacity>
+            {isTranscribing ? <ActivityIndicator color="#7bd0ff" /> : null}
+          </View>
+          {recording ? <Text style={styles.voiceReady}>{t.voiceListening}</Text> : null}
+          {isTranscribing ? <Text style={styles.voiceReady}>{t.voiceProcessing}</Text> : null}
+          {!audioRuntimeAvailable ? (
+            <Text style={styles.voiceReady}>Voice input needs a development build.</Text>
+          ) : null}
+        </View>
 
         <TextInput
           style={styles.input}
@@ -678,6 +902,35 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     color: '#dae2fd',
   },
+  voiceCard: {
+    backgroundColor: '#131b2e',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#2d3449',
+    marginBottom: 16,
+  },
+  voiceTitle: { fontSize: 13, fontWeight: '700', color: '#dae2fd' },
+  voiceHint: { fontSize: 11, color: '#9aa6bf', marginTop: 4 },
+  voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
+  voiceButton: {
+    backgroundColor: '#7bd0ff',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+  },
+  voiceButtonActive: { backgroundColor: '#ffb4ab' },
+  voiceButtonText: { color: '#00354a', fontSize: 12, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
+  voiceClearButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#2d3449',
+    backgroundColor: '#0b1326',
+  },
+  voiceClearText: { color: '#c6c6cd', fontSize: 12, fontWeight: '700' },
+  voiceReady: { marginTop: 10, fontSize: 12, color: '#7bd0ff', fontWeight: '700' },
   photoButton: {
     backgroundColor: '#131b2e',
     padding: 14,
